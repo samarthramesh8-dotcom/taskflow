@@ -215,6 +215,8 @@ export default function App() {
     }))
   }, [tasks])
 
+
+
   const visibleTasks = useMemo(() => {
     if (focusMode) {
       return taskScores.filter(ts => !ts.task.done).sort((a, b) => b.score - a.score).slice(0, 5).map(ts => ts.task)
