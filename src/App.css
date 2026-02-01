@@ -1168,3 +1168,36 @@ input, textarea, select {
     padding: var(--space-5);
   }
 }
+
+/* Input error state */
+.input-error {
+  border-color: var(--danger) !important;
+}
+
+.input-error:focus {
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2) !important;
+}
+
+/* Field-specific error message */
+.field-error {
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: rgba(239, 68, 68, 0.1);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--radius-sm);
+  color: var(--danger);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  animation: slideDown 0.2s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

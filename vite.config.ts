@@ -8,10 +8,32 @@ export default defineConfig({
       "/auth": {
         target: "http://localhost:4000",
         changeOrigin: true,
+        secure: false,
+        rewrite: (path) => {
+          console.log('[Vite Proxy] /auth:', path)
+          return path
+        }
       },
       "/api": {
         target: "http://localhost:4000",
         changeOrigin: true,
+        secure: false,
+        rewrite: (path) => {
+          console.log('[Vite Proxy] /api:', path)
+          return path
+        }
+      }
+    }
+  },
+  build: {
+    sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules")) {
+            return "vendor";
+          }
+        }
       }
     }
   }

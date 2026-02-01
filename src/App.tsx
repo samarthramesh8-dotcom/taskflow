@@ -27,6 +27,41 @@ interface Stats {
   high_priority: number
 }
 
+// Client-side validation helpers - MUST match backend rules exactly
+const validateEmailClient = (email: string): string | null => {
+  if (!email || email.trim().length === 0) {
+    return 'Email is required'
+  }
+  if (email.trim().length > 254) {
+    return 'Email is too long (max 254 characters)'
+  }
+  const trimmed = email.trim()
+  if (!trimmed.includes('@') || trimmed.split('@').length !== 2) {
+    return 'Please enter a valid email address'
+  }
+  const [localPart, domain] = trimmed.split('@')
+  if (!localPart || localPart.length === 0) {
+    return 'Please enter a valid email address'
+  }
+  if (!domain || domain.length === 0 || !domain.includes('.')) {
+    return 'Please enter a valid email address'
+  }
+  return null
+}
+
+const validatePasswordClient = (password: string): string | null => {
+  if (!password || password.length === 0) {
+    return 'Password is required'
+  }
+  if (password.length < 8) {
+    return 'Password must be at least 8 characters'
+  }
+  if (password.length > 128) {
+    return 'Password is too long (max 128 characters)'
+  }
+  return null
+}
+
 function App() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [input, setInput] = useState("")
@@ -47,8 +82,98 @@ function App() {
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
   const [initialLoading, setInitialLoading] = useState(true)
+  const [authErrors, setAuthErrors] = useState<{ email?: string; password?: string }>({})
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   const categories: Category[] = ["general", "work", "personal", "shopping", "health"]
+
+  const API_URL = import.meta.env.VITE_API_URL
+  
+  // Fail fast if API_URL is not configured
+  useEffect(() => {
+    if (import.meta.env.PROD && !API_URL) {
+      console.error('[App] CRITICAL: VITE_API_URL not set in production')
+      setError('API configuration error. Please contact support.')
+    }
+  }, [API_URL])
+
+  // Log API configuration on mount
+  useEffect(() => {
+    console.log('[App] Startup:', {
+      mode: import.meta.env.MODE,
+      prod: import.meta.env.PROD,
+      dev: import.meta.env.DEV,
+      apiUrl: API_URL || '(using Vite proxy)',
+      apiUrlDefined: !!API_URL
+    })
+  }, [])
+
+  // Helper function for API calls with robust JSON handling
+  const apiFetch = async (endpoint: string, options?: RequestInit) => {
+    // Ensure API_URL is available
+    if (import.meta.env.PROD && !API_URL) {
+      throw new Error('API configuration error: VITE_API_URL not set')
+    }
+
+    const url = `${API_URL}${endpoint}`
+    console.log(`[API] ${options?.method || 'GET'} ${url}`, {
+      apiUrl: API_URL,
+      endpoint,
+      fullUrl: url
+    })
+    
+    try {
+      const response = await fetch(url, {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          ...options?.headers
+        }
+      })
+      
+      const contentType = response.headers.get('content-type')
+      console.log(`[API] Response: ${response.status} ${response.statusText}`, {
+        contentType
+      })
+      
+      // Get response text
+      const text = await response.text()
+      console.log(`[API] Response body:`, text.substring(0, 500))
+      
+      // Check if response is JSON
+      if (!contentType || !contentType.includes('application/json')) {
+        console.error('[API] Non-JSON response:', {
+          status: response.status,
+          contentType: contentType || 'none',
+          body: text.substring(0, 200)
+        })
+        throw new Error(`Server returned ${contentType || 'unknown'} (${response.status})`)
+      }
+      
+      // Parse JSON safely
+      let data
+      try {
+        data = text ? JSON.parse(text) : {}
+      } catch (parseError) {
+        console.error('[API] JSON parse failed:', text.substring(0, 200))
+        throw new Error(`Invalid JSON response (${response.status})`)
+      }
+      
+      // Check response status
+      if (!response.ok) {
+        console.error('[API] Error response:', data)
+        throw new Error(data.error || `Request failed (${response.status})`)
+      }
+      
+      return data
+    } catch (error) {
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        console.error('[API] Network error - backend unreachable')
+        throw new Error('Cannot connect to server')
+      }
+      throw error
+    }
+  }
 
   useEffect(() => {
     if (!token) return
@@ -56,7 +181,6 @@ function App() {
     fetchStats()
   }, [token])
 
-  // Auto-dismiss success messages
   useEffect(() => {
     if (successMessage) {
       const timer = setTimeout(() => setSuccessMessage(null), 3000)
@@ -64,7 +188,6 @@ function App() {
     }
   }, [successMessage])
 
-  // Auto-dismiss error messages
   useEffect(() => {
     if (error) {
       const timer = setTimeout(() => setError(null), 5000)
@@ -72,7 +195,6 @@ function App() {
     }
   }, [error])
 
-  // Close user menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as HTMLElement
@@ -90,25 +212,21 @@ function App() {
     try {
       setLoading(true)
       setError(null)
-      const response = await fetch("/api/tasks", {
+      
+      const data = await apiFetch('/api/tasks', {
         headers: {
           "Authorization": `Bearer ${token}`,
           "Content-Type": "application/json"
         }
       })
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          handleLogout()
-          return
-        }
-        throw new Error(`Failed to load tasks (${response.status})`)
-      }
-
-      const data = await response.json()
+      
       setTasks(data)
     } catch (err) {
-      console.error("Fetch error:", err)
+      console.error("Fetch tasks error:", err)
+      if (err instanceof Error && err.message.includes('401')) {
+        handleLogout()
+        return
+      }
       setError(err instanceof Error ? err.message : "Failed to fetch tasks")
     } finally {
       setLoading(false)
@@ -118,19 +236,14 @@ function App() {
 
   const fetchStats = async () => {
     try {
-      const response = await fetch("/api/tasks/stats", {
+      const data = await apiFetch('/api/tasks/stats', {
         headers: {
           "Authorization": `Bearer ${token}`,
           "Content-Type": "application/json"
         }
       })
-
-      if (response.ok) {
-        const data = await response.json()
-        setStats(data)
-      } else {
-        console.error("Stats fetch failed:", response.status)
-      }
+      
+      setStats(data)
     } catch (err) {
       console.error("Stats error:", err)
     }
@@ -139,25 +252,21 @@ function App() {
   const seedSampleTasks = async () => {
     try {
       setLoading(true)
-      const response = await fetch("/api/tasks/seed", {
+      
+      await apiFetch('/api/tasks/seed', {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${token}`,
           "Content-Type": "application/json"
         }
       })
-
-      if (response.ok) {
-        await fetchTasks()
-        await fetchStats()
-        setSuccessMessage("Sample tasks added successfully")
-      } else {
-        const data = await response.json().catch(() => ({ error: "Failed to add sample tasks" }))
-        setError(data.error || "Failed to add sample tasks")
-      }
+      
+      await fetchTasks()
+      await fetchStats()
+      setSuccessMessage("Sample tasks added successfully")
     } catch (err) {
       console.error("Seed error:", err)
-      setError("Failed to add sample tasks")
+      setError(err instanceof Error ? err.message : "Failed to add sample tasks")
     } finally {
       setLoading(false)
     }
@@ -170,7 +279,8 @@ function App() {
 
     try {
       setLoading(true)
-      const response = await fetch("/api/tasks", {
+      
+      const newTask = await apiFetch('/api/tasks', {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${token}`,
@@ -185,12 +295,6 @@ function App() {
         })
       })
 
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({ error: "Failed to create task" }))
-        throw new Error(data.error || "Failed to create task")
-      }
-
-      const newTask = await response.json()
       setTasks([newTask, ...tasks])
       setInput("")
       setDescription("")
@@ -212,11 +316,10 @@ function App() {
     const originalTask = tasks.find(t => t.id === id)
     if (!originalTask) return
 
-    // Optimistic update
     setTasks(tasks.map(t => t.id === id ? { ...t, ...updates } : t))
 
     try {
-      const response = await fetch(`/api/tasks/${id}`, {
+      const updatedTask = await apiFetch(`/api/tasks/${id}`, {
         method: "PUT",
         headers: {
           "Authorization": `Bearer ${token}`,
@@ -225,20 +328,13 @@ function App() {
         body: JSON.stringify(updates)
       })
 
-      if (!response.ok) {
-        // Revert on failure
-        setTasks(tasks.map(t => t.id === id ? originalTask : t))
-        const data = await response.json().catch(() => ({ error: "Failed to update task" }))
-        throw new Error(data.error || "Failed to update task")
-      }
-
-      const updatedTask = await response.json()
       setTasks(tasks.map(t => t.id === id ? updatedTask : t))
       setEditingTask(null)
       setError(null)
       setSuccessMessage("Task updated")
       await fetchStats()
     } catch (err) {
+      setTasks(tasks.map(t => t.id === id ? originalTask : t))
       console.error("Update task error:", err)
       setError(err instanceof Error ? err.message : "Failed to update task")
     }
@@ -248,11 +344,10 @@ function App() {
     const task = tasks.find(t => t.id === id)
     if (!task) return
 
-    // Optimistic update
     setTasks(tasks.map(t => t.id === id ? { ...t, done: !t.done } : t))
     
     try {
-      const response = await fetch(`/api/tasks/${id}`, {
+      const updatedTask = await apiFetch(`/api/tasks/${id}`, {
         method: "PUT",
         headers: {
           "Authorization": `Bearer ${token}`,
@@ -261,16 +356,10 @@ function App() {
         body: JSON.stringify({ done: !task.done })
       })
 
-      if (!response.ok) {
-        // Revert on failure
-        setTasks(tasks.map(t => t.id === id ? task : t))
-        throw new Error("Failed to toggle task")
-      }
-
-      const updatedTask = await response.json()
       setTasks(tasks.map(t => t.id === id ? updatedTask : t))
       await fetchStats()
     } catch (err) {
+      setTasks(tasks.map(t => t.id === id ? task : t))
       console.error("Toggle task error:", err)
       setError("Failed to update task status")
     }
@@ -282,12 +371,11 @@ function App() {
     
     if (!confirm(`Delete "${task.text}"?`)) return
 
-    // Optimistic delete
     const originalTasks = [...tasks]
     setTasks(tasks.filter(t => t.id !== id))
 
     try {
-      const response = await fetch(`/api/tasks/${id}`, {
+      await apiFetch(`/api/tasks/${id}`, {
         method: "DELETE",
         headers: {
           "Authorization": `Bearer ${token}`,
@@ -295,22 +383,16 @@ function App() {
         }
       })
 
-      if (!response.ok) {
-        // Revert on failure
-        setTasks(originalTasks)
-        throw new Error("Failed to delete task")
-      }
-
       setError(null)
       setSuccessMessage("Task deleted")
       await fetchStats()
     } catch (err) {
+      setTasks(originalTasks)
       console.error("Delete task error:", err)
       setError("Failed to delete task")
     }
   }
 
-  // KPI calculations from ALL tasks, not filtered
   const kpiStats = useMemo(() => {
     const total = tasks.length
     const completed = tasks.filter(t => t.done).length
@@ -352,46 +434,124 @@ function App() {
   }, [tasks, filter, selectedCategory, searchQuery, sortBy])
 
   const handleRegister = async (email: string, password: string) => {
+    console.log('[Register] Handler called', { email, submitting: isSubmitting })
+    
+    if (isSubmitting) {
+      console.warn('[Register] Already submitting, ignoring duplicate request')
+      return
+    }
+
+    setAuthErrors({})
+    setIsSubmitting(true)
+    
+    console.log('[Register] Starting registration:', { 
+      email, 
+      password: '***',
+      apiUrl: API_URL 
+    })
+    
+    const emailError = validateEmailClient(email)
+    const passwordError = validatePasswordClient(password)
+    
+    console.log('[Register] Validation:', { emailError, passwordError })
+    
+    if (emailError || passwordError) {
+      setAuthErrors({
+        email: emailError || undefined,
+        password: passwordError || undefined
+      })
+      setIsSubmitting(false)
+      return
+    }
+
     try {
-      const response = await fetch("/auth/register", {
+      console.log('[Register] API call starting...')
+      const data = await apiFetch('/auth/register', {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password })
       })
 
-      if (!response.ok) {
-        const data = await response.json()
-        throw new Error(data.error || "Registration failed")
-      }
-
-      const data = await response.json()
+      console.log('[Register] API success:', { token: data.token ? '***' : 'missing', email: data.email })
       setToken(data.token)
       localStorage.setItem("token", data.token)
       setError(null)
+      setAuthErrors({})
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Registration failed")
+      console.error("[Register] API error:", err)
+      handleAuthError(err)
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
   const handleLogin = async (email: string, password: string) => {
+    console.log('[Login] Handler called', { email, submitting: isSubmitting })
+    
+    if (isSubmitting) {
+      console.warn('[Login] Already submitting, ignoring duplicate request')
+      return
+    }
+
+    setAuthErrors({})
+    setIsSubmitting(true)
+    
+    console.log('[Login] Starting login:', { 
+      email, 
+      password: '***',
+      apiUrl: API_URL 
+    })
+    
+    const emailError = validateEmailClient(email)
+    const passwordError = validatePasswordClient(password)
+    
+    console.log('[Login] Validation:', { emailError, passwordError })
+    
+    if (emailError || passwordError) {
+      setAuthErrors({
+        email: emailError || undefined,
+        password: passwordError || undefined
+      })
+      setIsSubmitting(false)
+      return
+    }
+
     try {
-      const response = await fetch("/auth/login", {
+      console.log('[Login] API call starting...')
+      const data = await apiFetch('/auth/login', {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password })
       })
 
-      if (!response.ok) {
-        const data = await response.json()
-        throw new Error(data.error || "Login failed")
-      }
-
-      const data = await response.json()
+      console.log('[Login] API success:', { token: data.token ? '***' : 'missing', email: data.email })
       setToken(data.token)
       localStorage.setItem("token", data.token)
       setError(null)
+      setAuthErrors({})
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed")
+      console.error("[Login] API error:", err)
+      handleAuthError(err)
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleAuthError = (err: unknown) => {
+    if (err instanceof Error) {
+      const message = err.message
+      try {
+        const parsed = JSON.parse(message)
+        if (parsed.field && parsed.error) {
+          setAuthErrors({ [parsed.field]: parsed.error })
+          return
+        }
+      } catch {
+        // Not JSON
+      }
+      setError(message)
+    } else {
+      setError("Request failed")
     }
   }
 
@@ -423,23 +583,19 @@ function App() {
   const displayedStats = stats ?? kpiStats
   const completionRate = displayedStats.total > 0 ? Math.round((displayedStats.completed / displayedStats.total) * 100) : 0
 
-  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Cmd/Ctrl + K to focus search
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault()
         const searchInput = document.querySelector('.search-input') as HTMLInputElement
         if (searchInput) searchInput.focus()
       }
-      // Cmd/Ctrl + N to open new task
       if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
         e.preventDefault()
         if (!showAddForm && !editingTask) {
           setShowAddForm(true)
         }
       }
-      // Escape to close modals
       if (e.key === 'Escape') {
         if (showAddForm) setShowAddForm(false)
         if (editingTask) setEditingTask(null)
@@ -463,22 +619,37 @@ function App() {
           <div className="auth-tabs">
             <button 
               className={authMode === "login" ? "active" : ""} 
-              onClick={() => setAuthMode("login")}
+              onClick={() => {
+                setAuthMode("login")
+                setAuthErrors({})
+                setError(null)
+              }}
+              disabled={isSubmitting}
             >
               Sign In
             </button>
             <button 
               className={authMode === "register" ? "active" : ""} 
-              onClick={() => setAuthMode("register")}
+              onClick={() => {
+                setAuthMode("register")
+                setAuthErrors({})
+                setError(null)
+              }}
+              disabled={isSubmitting}
             >
               Sign Up
             </button>
           </div>
           <form onSubmit={(e) => {
             e.preventDefault()
+            console.log('[Form] Submit event fired, isSubmitting:', isSubmitting)
+            
             const form = e.target as HTMLFormElement
             const email = (form.elements.namedItem("email") as HTMLInputElement).value
             const password = (form.elements.namedItem("password") as HTMLInputElement).value
+            
+            console.log('[Form] Form values:', { email, password: '***' })
+            
             if (authMode === "login") {
               handleLogin(email, password)
             } else {
@@ -487,14 +658,49 @@ function App() {
           }}>
             <div className="form-group">
               <label>Email</label>
-              <input name="email" type="email" placeholder="you@example.com" required />
+              <input 
+                name="email" 
+                type="email" 
+                placeholder="you@example.com" 
+                required 
+                disabled={isSubmitting}
+                className={authErrors.email ? 'input-error' : ''}
+                onChange={() => {
+                  if (authErrors.email) {
+                    setAuthErrors({ ...authErrors, email: undefined })
+                  }
+                }}
+              />
+              {authErrors.email && (
+                <div className="field-error">{authErrors.email}</div>
+              )}
             </div>
             <div className="form-group">
               <label>Password</label>
-              <input name="password" type="password" placeholder="••••••••" required minLength={6} />
+              <input 
+                name="password" 
+                type="password" 
+                placeholder="••••••••" 
+                required 
+                minLength={8}
+                disabled={isSubmitting}
+                className={authErrors.password ? 'input-error' : ''}
+                onChange={() => {
+                  if (authErrors.password) {
+                    setAuthErrors({ ...authErrors, password: undefined })
+                  }
+                }}
+              />
+              {authErrors.password && (
+                <div className="field-error">{authErrors.password}</div>
+              )}
             </div>
-            <button type="submit" className="btn-auth-primary">
-              {authMode === "login" ? "Sign In" : "Create Account"}
+            <button 
+              type="submit" 
+              className="btn-auth-primary"
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? (authMode === "login" ? "Signing In..." : "Creating Account...") : (authMode === "login" ? "Sign In" : "Create Account")}
             </button>
           </form>
           {error && <div className="auth-error">{error}</div>}

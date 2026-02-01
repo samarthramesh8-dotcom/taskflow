@@ -1,5 +1,5 @@
 /**
- * Strict validation for task payloads
+ * Strict validation for task payloads and auth
  */
 
 const VALID_PRIORITIES = ['low', 'medium', 'high'];
@@ -81,22 +81,48 @@ function validateTaskPayload(body, isUpdate = false) {
 
 function validateEmail(email) {
   if (!email || typeof email !== 'string') {
-    return false;
+    return { valid: false, error: 'Email is required' };
   }
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email) && email.length <= 254;
+  
+  const trimmed = email.trim();
+  
+  if (trimmed.length === 0) {
+    return { valid: false, error: 'Email is required' };
+  }
+  
+  if (trimmed.length > 254) {
+    return { valid: false, error: 'Email is too long (max 254 characters)' };
+  }
+  
+  // Simple email validation - just check for @ and domain
+  if (!trimmed.includes('@') || trimmed.split('@').length !== 2) {
+    return { valid: false, error: 'Please enter a valid email address' };
+  }
+  
+  const [localPart, domain] = trimmed.split('@');
+  if (!localPart || localPart.length === 0) {
+    return { valid: false, error: 'Please enter a valid email address' };
+  }
+  if (!domain || domain.length === 0 || !domain.includes('.')) {
+    return { valid: false, error: 'Please enter a valid email address' };
+  }
+  
+  return { valid: true };
 }
 
 function validatePassword(password) {
   if (!password || typeof password !== 'string') {
     return { valid: false, error: 'Password is required' };
   }
-  if (password.length < 6) {
-    return { valid: false, error: 'Password must be at least 6 characters' };
+  
+  if (password.length < 8) {
+    return { valid: false, error: 'Password must be at least 8 characters' };
   }
+  
   if (password.length > 128) {
-    return { valid: false, error: 'Password must not exceed 128 characters' };
+    return { valid: false, error: 'Password is too long (max 128 characters)' };
   }
+  
   return { valid: true };
 }
 
