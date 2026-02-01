@@ -1,4 +1,4 @@
-# TaskFlow
+# Task Master
 
 Smart task management with focus mode. A clean, efficient React + TypeScript app for staying productive.
 
@@ -57,6 +57,38 @@ src/
 - **Immutable Updates**: All state updates use array methods like `map` and `filter`
 - **Type Safety**: Strict TypeScript with proper interfaces
 - **Performance**: All derived data uses `useMemo` for optimal re-renders
+
+## Production Deployment
+
+### Environment Variables
+
+Create a `.env` file with the following variables:
+
+```bash
+NODE_ENV=production
+PORT=4000
+JWT_SECRET=<your-secure-random-secret>
+ALLOWED_ORIGINS=https://yourdomain.com
+```
+
+### Security Features
+
+- **Rate Limiting**:
+  - Auth endpoints: 5-10 requests per 15 minutes per IP
+  - Task endpoints: 100 requests per minute per authenticated user
+- **Request Validation**: Strict payload validation with length limits (500 chars for title, 2000 for description)
+- **CORS**: Restricted to configured origins in production
+- **Seed Endpoint**: Automatically disabled in production mode
+
+### Production Checklist
+
+- [ ] Set `NODE_ENV=production`
+- [ ] Generate secure `JWT_SECRET` (min 32 characters)
+- [ ] Configure `ALLOWED_ORIGINS` with your domain(s)
+- [ ] Ensure database backups are configured
+- [ ] Test rate limiting before go-live
+- [ ] Verify seed endpoint returns 403 in production
+
 import reactDom from 'eslint-plugin-react-dom'
 
 export default defineConfig([
@@ -79,4 +111,3 @@ export default defineConfig([
     },
   },
 ])
-```
