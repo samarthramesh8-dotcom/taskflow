@@ -25,3 +25,11 @@ dist-ssr
 .vercel
 
 /src/generated/prisma
+
+# env files
+.env
+server/.env
+
+# local databases
+*.sqlite
+server/*.sqlite
