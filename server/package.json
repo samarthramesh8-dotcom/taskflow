@@ -8,15 +8,21 @@
     "dev": "nodemon index.js",
     "migrate": "node db-migrate.js"
   },
-  "keywords": ["express", "postgres", "jwt", "auth"],
+  "keywords": [
+    "express",
+    "postgres",
+    "jwt",
+    "auth"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
-    "pg": "^8.11.3"
+    "pg": "^8.18.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.9"
