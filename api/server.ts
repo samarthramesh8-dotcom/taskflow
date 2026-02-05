@@ -4,7 +4,7 @@ import express from "express"
 import cors from "cors"
 import { Pool } from "pg"
 import { randomUUID } from "crypto"
-import authRoutes from "./routes/authRoutes"
+import authRoutes from "../server/auth.js"
 
 const app = express()
 
