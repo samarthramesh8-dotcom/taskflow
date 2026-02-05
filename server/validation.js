@@ -94,7 +94,6 @@ function validateEmail(email) {
     return { valid: false, error: 'Email is too long (max 254 characters)' };
   }
   
-  // Simple email validation - just check for @ and domain
   if (!trimmed.includes('@') || trimmed.split('@').length !== 2) {
     return { valid: false, error: 'Please enter a valid email address' };
   }

@@ -1,4 +1,7 @@
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
+const API_URL = import.meta.env.VITE_API_URL?.trim().replace(/\/+$/, "");
+if (!API_URL) {
+  throw new Error("VITE_API_URL is required");
+}
 
 function getAuthHeaders(): HeadersInit {
   const token = localStorage.getItem("auth_token");

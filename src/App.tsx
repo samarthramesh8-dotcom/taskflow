@@ -1,6 +1,7 @@
 // App.tsx
 import { useEffect, useState, useMemo } from "react"
 import "./App.css"
+import { login, register } from "./api"
 
 type Priority = "low" | "medium" | "high"
 type Category = "general" | "work" | "personal" | "shopping" | "health"
@@ -466,13 +467,9 @@ function App() {
 
     try {
       console.log('[Register] API call starting...')
-      const data = await apiFetch('/auth/register', {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password })
-      })
+      const data = await register(email, password)
 
-      console.log('[Register] API success:', { token: data.token ? '***' : 'missing', email: data.email })
+      console.log('[Register] API success:', { token: data.token ? '***' : 'missing', email: data.user?.email })
       setToken(data.token)
       localStorage.setItem("token", data.token)
       setError(null)
@@ -518,13 +515,9 @@ function App() {
 
     try {
       console.log('[Login] API call starting...')
-      const data = await apiFetch('/auth/login', {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password })
-      })
+      const data = await login(email, password)
 
-      console.log('[Login] API success:', { token: data.token ? '***' : 'missing', email: data.email })
+      console.log('[Login] API success:', { token: data.token ? '***' : 'missing', email: data.user?.email })
       setToken(data.token)
       localStorage.setItem("token", data.token)
       setError(null)

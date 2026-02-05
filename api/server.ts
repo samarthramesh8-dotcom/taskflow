@@ -4,6 +4,7 @@ import express from "express"
 import cors from "cors"
 import { Pool } from "pg"
 import { randomUUID } from "crypto"
+import authRoutes from "./routes/authRoutes"
 
 const app = express()
 
@@ -175,6 +176,9 @@ app.delete("/tasks/:id", async (req, res) => {
     res.status(500).json({ error: "failed to delete task" })
   }
 })
+
+app.use("/auth", authRoutes)
+app.use("/api/auth", authRoutes)
 
 const port = Number(process.env.PORT || 4000)
 app.listen(port, () => {

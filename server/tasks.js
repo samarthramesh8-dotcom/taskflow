@@ -1,86 +1,78 @@
 const express = require('express');
-const Database = require('better-sqlite3');
-const path = require('path');
+const { query } = require('./db');
 const { validateTaskPayload } = require('./validation');
 
 const router = express.Router();
-const dbPath = path.join(__dirname, 'database.sqlite');
-const db = new Database(dbPath);
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
-// Initialize tasks table
-db.exec(`
-  CREATE TABLE IF NOT EXISTS tasks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    text TEXT NOT NULL,
-    description TEXT,
-    done BOOLEAN DEFAULT 0,
-    priority TEXT DEFAULT 'medium',
-    category TEXT DEFAULT 'general',
-    due_date TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-  )
-`);
-
-// Add index for user_id queries
-db.exec(`
-  CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id)
-`);
-
-console.log('✅ Tasks table ready');
-
 // Get all tasks for authenticated user ONLY
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const tasks = db.prepare(`
-      SELECT * FROM tasks 
-      WHERE user_id = ? 
-      ORDER BY 
-        done ASC,
-        CASE priority 
-          WHEN 'high' THEN 1 
-          WHEN 'medium' THEN 2 
-          WHEN 'low' THEN 3 
-        END,
-        created_at DESC
-    `).all(req.user.userId);
+    console.log('[Tasks GET /] User:', req.user.userId);
     
-    res.json(tasks.map(t => ({ ...t, done: Boolean(t.done) })));
+    const result = await query(
+      `SELECT id, user_id, text, description, done, priority, category, due_date, created_at, updated_at
+       FROM tasks 
+       WHERE user_id = $1 
+       ORDER BY 
+         done ASC,
+         CASE priority 
+           WHEN 'high' THEN 1 
+           WHEN 'medium' THEN 2 
+           WHEN 'low' THEN 3 
+         END,
+         created_at DESC`,
+      [req.user.userId]
+    );
+    
+    console.log('[Tasks GET /] Found', result.rows.length, 'tasks');
+    res.json(result.rows);
   } catch (err) {
-    console.error('Get tasks error:', err);
+    console.error('[Tasks GET /] ERROR:', err.message);
+    console.error('[Tasks GET /] Stack:', err.stack);
     res.status(500).json({ error: 'Failed to fetch tasks' });
   }
 });
 
 // Get task statistics for authenticated user ONLY
-router.get('/stats', (req, res) => {
+router.get('/stats', async (req, res) => {
   try {
-    const stats = db.prepare(`
-      SELECT 
+    console.log('[Tasks STATS] User ID:', req.user.userId);
+    
+    const result = await query(
+      `SELECT 
         COUNT(*) as total,
-        SUM(CASE WHEN done = 1 THEN 1 ELSE 0 END) as completed,
-        SUM(CASE WHEN done = 0 THEN 1 ELSE 0 END) as pending,
-        SUM(CASE WHEN priority = 'high' AND done = 0 THEN 1 ELSE 0 END) as high_priority
-      FROM tasks WHERE user_id = ?
-    `).get(req.user.userId);
+        SUM(CASE WHEN done = true THEN 1 ELSE 0 END) as completed,
+        SUM(CASE WHEN done = false THEN 1 ELSE 0 END) as pending,
+        SUM(CASE WHEN priority = 'high' AND done = false THEN 1 ELSE 0 END) as high_priority
+       FROM tasks WHERE user_id = $1`,
+      [req.user.userId]
+    );
 
-    res.json(stats);
+    const stats = result.rows[0];
+    res.json({
+      total: parseInt(stats.total) || 0,
+      completed: parseInt(stats.completed) || 0,
+      pending: parseInt(stats.pending) || 0,
+      high_priority: parseInt(stats.high_priority) || 0
+    });
   } catch (err) {
-    console.error('Stats error:', err);
+    console.error('[Tasks STATS] Error:', err.message);
     res.status(500).json({ error: 'Failed to fetch stats' });
   }
 });
 
-// Create task - userId set SERVER-SIDE from auth context + strict validation
-router.post('/', (req, res) => {
+// Create task - userId set SERVER-SIDE from auth context
+router.post('/', async (req, res) => {
   const { text, description, priority, category, due_date } = req.body;
+  
+  console.log('[Tasks POST] Request received:', { text, description, priority, category, due_date });
+  console.log('[Tasks POST] User:', { userId: req.user.userId, email: req.user.email });
   
   // Strict validation
   const validation = validateTaskPayload(req.body, false);
   if (!validation.valid) {
+    console.log('[Tasks POST] Validation failed:', validation.errors);
     return res.status(400).json({ 
       error: 'Validation failed', 
       details: validation.errors 
@@ -88,36 +80,51 @@ router.post('/', (req, res) => {
   }
 
   try {
-    // SECURITY: userId comes from authenticated session, NOT from client
-    const result = db.prepare(`
-      INSERT INTO tasks (user_id, text, description, priority, category, due_date)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(
+    const insertQuery = `INSERT INTO tasks (user_id, text, description, priority, category, done, due_date)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, user_id, text, description, done, priority, category, due_date, created_at, updated_at`;
+    
+    const insertValues = [
       req.user.userId,
       text.trim(),
       description?.trim() || null,
       priority || 'medium',
       category || 'general',
+      false,
       due_date || null
-    );
-
-    const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(result.lastInsertRowid);
-    console.log(`✓ Task created: "${text.trim()}" (ID: ${result.lastInsertRowid}, User: ${req.user.userId})`);
-    res.status(201).json({ ...task, done: Boolean(task.done) });
+    ];
+    
+    console.log('[Tasks POST] Executing query:', insertQuery);
+    console.log('[Tasks POST] With values:', insertValues);
+    
+    const result = await query(insertQuery, insertValues);
+    
+    console.log('[Tasks POST] Insert successful, rows:', result.rows.length);
+    const task = result.rows[0];
+    console.log(`✓ Task created: ID ${task.id}`);
+    res.status(201).json(task);
   } catch (err) {
-    console.error('Create task error:', err);
+    console.error('[Tasks POST] ERROR caught');
+    console.error('[Tasks POST] Error message:', err.message);
+    console.error('[Tasks POST] Error code:', err.code);
+    console.error('[Tasks POST] Error detail:', err.detail);
+    console.error('[Tasks POST] Error hint:', err.hint);
+    console.error('[Tasks POST] Full error:', JSON.stringify(err, null, 2));
     res.status(500).json({ error: 'Failed to create task' });
   }
 });
 
-// Update task - VERIFY OWNERSHIP + strict validation
-router.put('/:id', (req, res) => {
+// Update task - VERIFY OWNERSHIP before allowing update
+router.put('/:id', async (req, res) => {
   const { id } = req.params;
   const { text, description, done, priority, category, due_date } = req.body;
+
+  console.log('[Tasks PUT] Updating task:', { id, userId: req.user.userId });
 
   // Strict validation
   const validation = validateTaskPayload(req.body, true);
   if (!validation.valid) {
+    console.log('[Tasks PUT] Validation failed:', validation.errors);
     return res.status(400).json({ 
       error: 'Validation failed', 
       details: validation.errors 
@@ -126,65 +133,85 @@ router.put('/:id', (req, res) => {
 
   try {
     // SECURITY: Verify task exists AND is owned by authenticated user
-    const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, req.user.userId);
+    const taskResult = await query(
+      'SELECT * FROM tasks WHERE id = $1 AND user_id = $2',
+      [id, req.user.userId]
+    );
     
-    if (!task) {
+    if (taskResult.rows.length === 0) {
+      console.log('[Tasks PUT] Task not found:', { id, userId: req.user.userId });
       return res.status(404).json({ error: 'Task not found' });
     }
 
+    const currentTask = taskResult.rows[0];
+
     // Update only if ownership verified
-    db.prepare(`
-      UPDATE tasks 
-      SET text = ?, description = ?, done = ?, priority = ?, category = ?, due_date = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ? AND user_id = ?
-    `).run(
-      text !== undefined ? text.trim() : task.text,
-      description !== undefined ? (description?.trim() || null) : task.description,
-      done !== undefined ? (done ? 1 : 0) : task.done,
-      priority !== undefined ? priority : task.priority,
-      category !== undefined ? category : task.category,
-      due_date !== undefined ? due_date : task.due_date,
-      id,
-      req.user.userId
+    const updateResult = await query(
+      `UPDATE tasks 
+       SET text = COALESCE($1, text),
+           description = COALESCE($2, description),
+           done = COALESCE($3, done),
+           priority = COALESCE($4, priority),
+           category = COALESCE($5, category),
+           due_date = COALESCE($6, due_date),
+           updated_at = now()
+       WHERE id = $7 AND user_id = $8
+       RETURNING id, user_id, text, description, done, priority, category, due_date, created_at, updated_at`,
+      [
+        text !== undefined ? text.trim() : null,
+        description !== undefined ? (description?.trim() || null) : null,
+        done !== undefined ? done : null,
+        priority !== undefined ? priority : null,
+        category !== undefined ? category : null,
+        due_date !== undefined ? due_date : null,
+        id,
+        req.user.userId
+      ]
     );
 
-    const updated = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, req.user.userId);
+    const updated = updateResult.rows[0];
     console.log(`✓ Task updated: ID ${id} (User: ${req.user.userId})`);
-    res.json({ ...updated, done: Boolean(updated.done) });
+    res.json(updated);
   } catch (err) {
-    console.error('Update task error:', err);
+    console.error('[Tasks PUT] Error:', err.message);
     res.status(500).json({ error: 'Failed to update task' });
   }
 });
 
-// Delete task - VERIFY OWNERSHIP
-router.delete('/:id', (req, res) => {
+// Delete task - VERIFY OWNERSHIP before allowing delete
+router.delete('/:id', async (req, res) => {
   const { id } = req.params;
+
+  console.log('[Tasks DELETE] Deleting task:', { id, userId: req.user.userId });
 
   try {
     // SECURITY: Verify task exists AND is owned by authenticated user
-    const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(id, req.user.userId);
+    const taskResult = await query(
+      'SELECT id FROM tasks WHERE id = $1 AND user_id = $2',
+      [id, req.user.userId]
+    );
     
-    if (!task) {
+    if (taskResult.rows.length === 0) {
+      console.log('[Tasks DELETE] Task not found:', { id, userId: req.user.userId });
       return res.status(404).json({ error: 'Task not found' });
     }
 
-    const result = db.prepare('DELETE FROM tasks WHERE id = ? AND user_id = ?').run(id, req.user.userId);
-    
-    if (result.changes === 0) {
-      return res.status(404).json({ error: 'Task not found' });
-    }
+    // Delete only if ownership verified
+    await query(
+      'DELETE FROM tasks WHERE id = $1 AND user_id = $2',
+      [id, req.user.userId]
+    );
 
     console.log(`✓ Task deleted: ID ${id} (User: ${req.user.userId})`);
     res.json({ success: true });
   } catch (err) {
-    console.error('Delete task error:', err);
+    console.error('[Tasks DELETE] Error:', err.message);
     res.status(500).json({ error: 'Failed to delete task' });
   }
 });
 
-// Seed sample tasks - DISABLED IN PRODUCTION
-router.post('/seed', (req, res) => {
+// Seed sample tasks - DEV/DEMO ONLY
+router.post('/seed', async (req, res) => {
   // PRODUCTION SAFETY: Disable seed endpoint in production
   if (NODE_ENV === 'production') {
     return res.status(403).json({ 
@@ -193,9 +220,12 @@ router.post('/seed', (req, res) => {
   }
 
   try {
-    const existingTasks = db.prepare('SELECT COUNT(*) as count FROM tasks WHERE user_id = ?').get(req.user.userId);
+    const existingResult = await query(
+      'SELECT COUNT(*) as count FROM tasks WHERE user_id = $1',
+      [req.user.userId]
+    );
     
-    if (existingTasks.count > 0) {
+    if (parseInt(existingResult.rows[0].count) > 0) {
       return res.status(400).json({ error: 'User already has tasks' });
     }
 
@@ -205,35 +235,27 @@ router.post('/seed', (req, res) => {
       { text: 'Buy groceries for the week', description: 'Milk, eggs, bread, vegetables, chicken', priority: 'medium', category: 'shopping', due_date: new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] },
       { text: 'Complete project documentation', description: 'Write API docs and user guide', priority: 'high', category: 'work', due_date: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] },
       { text: 'Book dentist appointment', description: null, priority: 'medium', category: 'health', due_date: null },
-      { text: 'Renew gym membership', description: 'Check for annual discount offers', priority: 'low', category: 'health', due_date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] },
-      { text: 'Call mom', description: null, priority: 'medium', category: 'personal', due_date: null },
-      { text: 'Fix leaking kitchen faucet', description: 'Buy replacement washer from hardware store', priority: 'high', category: 'personal', due_date: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] },
-      { text: 'Prepare presentation slides', description: 'Product roadmap for Q1 stakeholder meeting', priority: 'high', category: 'work', due_date: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] },
-      { text: 'Order birthday gift', description: 'Check wishlist and order from Amazon', priority: 'medium', category: 'shopping', due_date: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] },
-      { text: 'Research vacation destinations', description: 'Compare prices for summer 2024 trips', priority: 'low', category: 'personal', due_date: null },
-      { text: 'Update resume', description: null, priority: 'low', category: 'work', due_date: null },
-      { text: 'Organize home office', description: 'File documents and clean desk area', priority: 'low', category: 'personal', due_date: null },
-      { text: 'Review pull requests', description: 'Check team PRs and provide feedback', priority: 'high', category: 'work', due_date: new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] },
-      { text: 'Pay utility bills', description: 'Electricity, water, and internet', priority: 'high', category: 'general', due_date: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] },
     ];
 
-    const insert = db.prepare(`
-      INSERT INTO tasks (user_id, text, description, priority, category, due_date)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
-
-    const insertMany = db.transaction((tasks) => {
-      for (const task of tasks) {
-        insert.run(req.user.userId, task.text, task.description, task.priority, task.category, task.due_date);
-      }
-    });
-
-    insertMany(sampleTasks);
+    for (const task of sampleTasks) {
+      await query(
+        `INSERT INTO tasks (user_id, text, description, priority, category, done, due_date)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          req.user.userId,
+          task.text,
+          task.description,
+          task.priority,
+          task.category,
+          task.due_date
+        ]
+      );
+    }
 
     console.log(`✓ Seeded ${sampleTasks.length} sample tasks for user ${req.user.email} (ID: ${req.user.userId})`);
     res.json({ success: true, count: sampleTasks.length });
   } catch (err) {
-    console.error('Seed tasks error:', err);
+    console.error('[Tasks SEED] Error:', err.message);
     res.status(500).json({ error: 'Failed to seed tasks' });
   }
 });

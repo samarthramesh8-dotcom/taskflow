@@ -8,20 +8,12 @@ export default defineConfig({
       "/auth": {
         target: "http://localhost:4000",
         changeOrigin: true,
-        secure: false,
-        rewrite: (path) => {
-          console.log('[Vite Proxy] /auth:', path)
-          return path
-        }
+        ws: true
       },
       "/api": {
         target: "http://localhost:4000",
         changeOrigin: true,
-        secure: false,
-        rewrite: (path) => {
-          console.log('[Vite Proxy] /api:', path)
-          return path
-        }
+        ws: true
       }
     }
   },

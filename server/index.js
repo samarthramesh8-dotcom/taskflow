@@ -1,15 +1,17 @@
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+
 const express = require('express');
 const cors = require('cors');
 const authRouter = require('./auth');
 const tasksRouter = require('./tasks');
 const { authMiddleware } = require('./auth');
+const { pool } = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
-console.log('[Server] Starting...', { PORT, NODE_ENV });
+console.log('[Server] Starting...', { PORT, NODE_ENV, hasDbUrl: !!process.env.DATABASE_URL });
 
 // CORS configuration
 const allowedOrigins = NODE_ENV === 'production' 
@@ -95,23 +97,34 @@ setInterval(() => {
   }
 }, 15 * 60 * 1000);
 
-// Health check
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    timestamp: new Date().toISOString(), 
-    env: NODE_ENV,
-    port: PORT
-  });
+// Health check - MUST be first
+app.get('/health', async (req, res) => {
+  try {
+    await pool.query('SELECT 1');
+    res.json({ 
+      status: 'ok', 
+      timestamp: new Date().toISOString(), 
+      env: NODE_ENV,
+      port: PORT,
+      database: 'connected'
+    });
+  } catch (err) {
+    console.error('[Health] Database connection failed:', err.message);
+    res.status(503).json({ 
+      status: 'error', 
+      message: 'Database connection failed',
+      database: 'disconnected'
+    });
+  }
 });
 
-// Auth routes
-app.use('/auth/register', rateLimit(15 * 60 * 1000, 5));
-app.use('/auth/login', rateLimit(15 * 60 * 1000, 10));
+// Auth routes - MUST be registered
+console.log('[Server] Registering /auth routes');
 app.use('/auth', authRouter);
 
 // Task routes
-app.use('/api/tasks', authMiddleware, rateLimit(60 * 1000, 100), tasksRouter);
+console.log('[Server] Registering /api/tasks routes');
+app.use('/api/tasks', authMiddleware, tasksRouter);
 
 // 404 handler - MUST return JSON
 app.use((req, res) => {
@@ -147,5 +160,16 @@ app.use((err, req, res, next) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log(`   Environment: ${NODE_ENV}`);
-  console.log(`   CORS origins: ${allowedOrigins.join(', ')}`);
+  console.log(`   Database: ${process.env.DATABASE_URL ? 'configured' : 'MISSING'}`);
+  console.log(`   Routes: /health, /auth/*, /api/tasks/*`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('[Server] SIGTERM received, closing server...');
+  server.close(() => {
+    console.log('[Server] Server closed');
+    pool.end();
+    process.exit(0);
+  });
 });
