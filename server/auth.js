@@ -1,4 +1,4 @@
-require('dotenv').config();
+// dotenv intentionally not used; Render provides env vars.
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
