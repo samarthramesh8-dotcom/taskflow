@@ -5,7 +5,7 @@ const cors = require('cors');
 const authRouter = require('./auth');
 const tasksRouter = require('./tasks');
 const { authMiddleware } = require('./auth');
-const { pool } = require('./db');
+const { query } = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -100,7 +100,7 @@ setInterval(() => {
 // Health check - MUST be first
 app.get('/health', async (req, res) => {
   try {
-    await pool.query('SELECT 1');
+    await query('SELECT 1');
     res.json({ 
       status: 'ok', 
       timestamp: new Date().toISOString(), 
@@ -119,7 +119,7 @@ app.get('/health', async (req, res) => {
 });
 
 const runMigrations = async () => {
-  await pool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS due_at TIMESTAMPTZ`);
+  await query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS due_at TIMESTAMPTZ`);
 };
 
 const startServer = () => {
@@ -174,7 +174,6 @@ const startServer = () => {
     console.log('[Server] SIGTERM received, closing server...');
     server.close(() => {
       console.log('[Server] Server closed');
-      pool.end();
       process.exit(0);
     });
   });
