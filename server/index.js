@@ -118,8 +118,10 @@ app.get('/health', async (req, res) => {
   }
 });
 
+const MIGRATION_SQL = `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS due_at TIMESTAMPTZ`;
+
 const runMigrations = async () => {
-  await query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS due_at TIMESTAMPTZ`);
+  await query(MIGRATION_SQL);
 };
 
 const startServer = () => {

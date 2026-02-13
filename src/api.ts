@@ -1,5 +1,17 @@
-const API_URL = import.meta.env.VITE_API_URL?.trim().replace(/\/+$/, "");
-if (!API_URL) {
+const API_URL = import.meta.env.VITE_API_URL?.trim().replace(/\/+$/, "") || "";
+
+function requireApiUrl(): string {
+  if (API_URL) {
+    return API_URL;
+  }
+  const isLocal =
+    typeof window !== "undefined" &&
+    (window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1");
+
+  if (import.meta.env.DEV || isLocal) {
+    return "";
+  }
   throw new Error("VITE_API_URL is required");
 }
 
@@ -20,6 +32,7 @@ export type Task = {
   done: boolean;
   priority: "low" | "medium" | "high";
   dueDate?: string;
+  dueAt?: string;
   createdAt: number;
 };
 
@@ -27,7 +40,8 @@ export async function register(email: string, password: string): Promise<{
   token: string;
   user: { email: string };
 }> {
-  const res = await fetch(`${API_URL}/auth/register`, {
+  const baseUrl = requireApiUrl();
+  const res = await fetch(`${baseUrl}/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
@@ -43,7 +57,8 @@ export async function login(email: string, password: string): Promise<{
   token: string;
   user: { email: string };
 }> {
-  const res = await fetch(`${API_URL}/auth/login`, {
+  const baseUrl = requireApiUrl();
+  const res = await fetch(`${baseUrl}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
@@ -59,7 +74,8 @@ export async function login(email: string, password: string): Promise<{
    READ
 ======================= */
 export async function getTasks(): Promise<Task[]> {
-  const res = await fetch(`${API_URL}/tasks`, {
+  const baseUrl = requireApiUrl();
+  const res = await fetch(`${baseUrl}/tasks`, {
     headers: getAuthHeaders(),
   });
   if (!res.ok) {
@@ -75,7 +91,8 @@ export async function getTasks(): Promise<Task[]> {
 export async function createTask(
   data: { text: string; priority: "low" | "medium" | "high"; dueDate?: string }
 ): Promise<Task> {
-  const res = await fetch(`${API_URL}/tasks`, {
+  const baseUrl = requireApiUrl();
+  const res = await fetch(`${baseUrl}/tasks`, {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify(data),
@@ -102,7 +119,8 @@ export async function updateTask(
   id: string,
   data: Partial<Task>
 ): Promise<Task> {
-  const res = await fetch(`${API_URL}/tasks/${id}`, {
+  const baseUrl = requireApiUrl();
+  const res = await fetch(`${baseUrl}/tasks/${id}`, {
     method: "PUT",
     headers: getAuthHeaders(),
     body: JSON.stringify(data),
@@ -118,7 +136,8 @@ export async function updateTask(
    DELETE
 ======================= */
 export async function deleteTask(id: string): Promise<void> {
-  const res = await fetch(`${API_URL}/tasks/${id}`, {
+  const baseUrl = requireApiUrl();
+  const res = await fetch(`${baseUrl}/tasks/${id}`, {
     method: "DELETE",
     headers: getAuthHeaders(),
   });

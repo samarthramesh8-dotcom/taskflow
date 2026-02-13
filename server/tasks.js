@@ -11,16 +11,11 @@ router.get('/', async (req, res) => {
     console.log('[Tasks GET /] User:', req.user.userId);
     
     const result = await query(
-      `SELECT id, user_id, text, description, done, priority, category, due_date, created_at, updated_at
+      `SELECT id, user_id, text, description, done, priority, category, due_date, due_at, created_at, updated_at
        FROM tasks 
        WHERE user_id = $1 
        ORDER BY 
-         done ASC,
-         CASE priority 
-           WHEN 'high' THEN 1 
-           WHEN 'medium' THEN 2 
-           WHEN 'low' THEN 3 
-         END,
+         due_at ASC NULLS LAST,
          created_at DESC`,
       [req.user.userId]
     );
@@ -64,9 +59,9 @@ router.get('/stats', async (req, res) => {
 
 // Create task - userId set SERVER-SIDE from auth context
 router.post('/', async (req, res) => {
-  const { text, description, priority, category, due_date } = req.body;
+  const { text, description, priority, category, due_date, due_at } = req.body;
   
-  console.log('[Tasks POST] Request received:', { text, description, priority, category, due_date });
+  console.log('[Tasks POST] Request received:', { text, description, priority, category, due_date, due_at });
   console.log('[Tasks POST] User:', { userId: req.user.userId, email: req.user.email });
   
   // Strict validation
@@ -80,9 +75,9 @@ router.post('/', async (req, res) => {
   }
 
   try {
-    const insertQuery = `INSERT INTO tasks (user_id, text, description, priority, category, done, due_date)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING id, user_id, text, description, done, priority, category, due_date, created_at, updated_at`;
+    const insertQuery = `INSERT INTO tasks (user_id, text, description, priority, category, done, due_date, due_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING id, user_id, text, description, done, priority, category, due_date, due_at, created_at, updated_at`;
     
     const insertValues = [
       req.user.userId,
@@ -91,7 +86,8 @@ router.post('/', async (req, res) => {
       priority || 'medium',
       category || 'general',
       false,
-      due_date || null
+      due_date || null,
+      due_at || null
     ];
     
     console.log('[Tasks POST] Executing query:', insertQuery);
@@ -101,7 +97,7 @@ router.post('/', async (req, res) => {
     
     console.log('[Tasks POST] Insert successful, rows:', result.rows.length);
     const task = result.rows[0];
-    console.log(`✓ Task created: ID ${task.id}`);
+    console.log(`✓ hereted: ID ${task.id}`);
     res.status(201).json(task);
   } catch (err) {
     console.error('[Tasks POST] ERROR caught');
@@ -117,7 +113,7 @@ router.post('/', async (req, res) => {
 // Update task - VERIFY OWNERSHIP before allowing update
 router.put('/:id', async (req, res) => {
   const { id } = req.params;
-  const { text, description, done, priority, category, due_date } = req.body;
+  const { text, description, done, priority, category, due_date, due_at } = req.body;
 
   console.log('[Tasks PUT] Updating task:', { id, userId: req.user.userId });
 
@@ -154,9 +150,10 @@ router.put('/:id', async (req, res) => {
            priority = COALESCE($4, priority),
            category = COALESCE($5, category),
            due_date = COALESCE($6, due_date),
+           due_at = COALESCE($7, due_at),
            updated_at = now()
-       WHERE id = $7 AND user_id = $8
-       RETURNING id, user_id, text, description, done, priority, category, due_date, created_at, updated_at`,
+       WHERE id = $8 AND user_id = $9
+       RETURNING id, user_id, text, description, done, priority, category, due_date, due_at, created_at, updated_at`,
       [
         text !== undefined ? text.trim() : null,
         description !== undefined ? (description?.trim() || null) : null,
@@ -164,6 +161,7 @@ router.put('/:id', async (req, res) => {
         priority !== undefined ? priority : null,
         category !== undefined ? category : null,
         due_date !== undefined ? due_date : null,
+        due_at !== undefined ? due_at : null,
         id,
         req.user.userId
       ]
@@ -239,15 +237,16 @@ router.post('/seed', async (req, res) => {
 
     for (const task of sampleTasks) {
       await query(
-        `INSERT INTO tasks (user_id, text, description, priority, category, done, due_date)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        `INSERT INTO tasks (user_id, text, description, priority, category, done, due_date, due_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           req.user.userId,
           task.text,
           task.description,
           task.priority,
           task.category,
-          task.due_date
+          task.due_date,
+          null
         ]
       );
     }

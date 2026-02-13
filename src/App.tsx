@@ -14,12 +14,15 @@ interface Task {
   priority: Priority
   category: Category
   due_date?: string
+  due_at?: string
   created_at: string
   updated_at: string
+  dueAt?: string
 }
 
 type Filter = "all" | "active" | "done"
 type SortBy = "created" | "priority" | "due_date" | "category"
+type DueFilter = "all" | "today" | "upcoming" | "overdue"
 
 interface Stats {
   total: number
@@ -73,9 +76,10 @@ function App() {
   const [selectedCategory, setSelectedCategory] = useState<Category | "all">("all")
   const [selectedPriority, setSelectedPriority] = useState<Priority>("medium")
   const [dueDate, setDueDate] = useState("")
+  const [dueTime, setDueTime] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const [token, setToken] = useState<string | null>(localStorage.getItem("token"))
+  const [token, setToken] = useState<string | null>(localStorage.getItem("auth_token"))
   const [authMode, setAuthMode] = useState<"login" | "register">("login")
   const [editingTask, setEditingTask] = useState<Task | null>(null)
   const [stats, setStats] = useState<Stats | null>(null)
@@ -83,6 +87,7 @@ function App() {
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
   const [initialLoading, setInitialLoading] = useState(true)
+  const [dueFilter, setDueFilter] = useState<DueFilter>("all")
   const [authErrors, setAuthErrors] = useState<{ email?: string; password?: string }>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -162,6 +167,9 @@ function App() {
       
       // Check response status
       if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error("Unauthorized")
+        }
         console.error('[API] Error response:', data)
         throw new Error(data.error || `Request failed (${response.status})`)
       }
@@ -180,7 +188,7 @@ function App() {
     if (!token) return
     fetchTasks()
     fetchStats()
-  }, [token])
+  }, [token, dueFilter])
 
   useEffect(() => {
     if (successMessage) {
@@ -213,18 +221,21 @@ function App() {
     try {
       setLoading(true)
       setError(null)
-      
-      const data = await apiFetch('/api/tasks', {
+
+      const endpoint =
+        dueFilter === "all" ? "/api/tasks" : `/api/tasks/${dueFilter}`
+
+      const data = await apiFetch(endpoint, {
         headers: {
           "Authorization": `Bearer ${token}`,
           "Content-Type": "application/json"
         }
       })
-      
+
       setTasks(data)
     } catch (err) {
       console.error("Fetch tasks error:", err)
-      if (err instanceof Error && err.message.includes('401')) {
+      if (err instanceof Error && err.message === "Unauthorized") {
         handleLogout()
         return
       }
@@ -247,6 +258,9 @@ function App() {
       setStats(data)
     } catch (err) {
       console.error("Stats error:", err)
+      if (err instanceof Error && err.message === "Unauthorized") {
+        handleLogout()
+      }
     }
   }
 
@@ -280,7 +294,9 @@ function App() {
 
     try {
       setLoading(true)
-      
+
+      const dueAtIso = buildDueAtIso(dueDate, dueTime)
+
       const newTask = await apiFetch('/api/tasks', {
         method: "POST",
         headers: {
@@ -292,7 +308,8 @@ function App() {
           description: description.trim() || undefined,
           priority: selectedPriority,
           category: selectedCategory === "all" ? "general" : selectedCategory,
-          due_date: dueDate || undefined
+          due_date: dueDate || undefined,
+          due_at: dueAtIso
         })
       })
 
@@ -300,6 +317,7 @@ function App() {
       setInput("")
       setDescription("")
       setDueDate("")
+      setDueTime("")
       setSelectedPriority("medium")
       setShowAddForm(false)
       setError(null)
@@ -394,6 +412,28 @@ function App() {
     }
   }
 
+  const buildDueAtIso = (date: string, time: string) => {
+    if (!date) return undefined
+    const effectiveTime = time || "09:00"
+    const [hours, minutes] = effectiveTime.split(":").map(Number)
+    const d = new Date(date)
+    d.setHours(hours, minutes, 0, 0)
+    return d.toISOString()
+  }
+
+  const formatDueTime = (iso?: string) => {
+    if (!iso) return ""
+    return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+  }
+
+  const toTimeInput = (iso?: string) => {
+    if (!iso) return ""
+    const d = new Date(iso)
+    const hh = String(d.getHours()).padStart(2, "0")
+    const mm = String(d.getMinutes()).padStart(2, "0")
+    return `${hh}:${mm}`
+  }
+
   const kpiStats = useMemo(() => {
     const total = tasks.length
     const completed = tasks.filter(t => t.done).length
@@ -471,7 +511,7 @@ function App() {
 
       console.log('[Register] API success:', { token: data.token ? '***' : 'missing', email: data.user?.email })
       setToken(data.token)
-      localStorage.setItem("token", data.token)
+      localStorage.setItem("auth_token", data.token)
       setError(null)
       setAuthErrors({})
     } catch (err) {
@@ -519,7 +559,7 @@ function App() {
 
       console.log('[Login] API success:', { token: data.token ? '***' : 'missing', email: data.user?.email })
       setToken(data.token)
-      localStorage.setItem("token", data.token)
+      localStorage.setItem("auth_token", data.token)
       setError(null)
       setAuthErrors({})
     } catch (err) {
@@ -550,7 +590,7 @@ function App() {
 
   const handleLogout = () => {
     setToken(null)
-    localStorage.removeItem("token")
+    localStorage.removeItem("auth_token")
     setTasks([])
     setStats(null)
     setError(null)
@@ -568,9 +608,10 @@ function App() {
     return icons[category]
   }
 
-  const isOverdue = (dueDate?: string) => {
-    if (!dueDate) return false
-    return new Date(dueDate) < new Date() && new Date(dueDate).toDateString() !== new Date().toDateString()
+  const isOverdue = (dueDate?: string, dueAt?: string) => {
+    const value = dueAt || dueDate
+    if (!value) return false
+    return new Date(value) < new Date() && new Date(value).toDateString() !== new Date().toDateString()
   }
 
   const displayedStats = stats ?? kpiStats
@@ -855,6 +896,30 @@ function App() {
                 <option value="category">Category</option>
                 <option value="created">Created</option>
               </select>
+              <button
+                className={dueFilter === "today" ? "btn-secondary" : "btn-secondary"}
+                onClick={() => setDueFilter("today")}
+              >
+                Today
+              </button>
+              <button
+                className={dueFilter === "upcoming" ? "btn-secondary" : "btn-secondary"}
+                onClick={() => setDueFilter("upcoming")}
+              >
+                Upcoming
+              </button>
+              <button
+                className={dueFilter === "overdue" ? "btn-secondary" : "btn-secondary"}
+                onClick={() => setDueFilter("overdue")}
+              >
+                Overdue
+              </button>
+              <button
+                className={dueFilter === "all" ? "btn-secondary" : "btn-secondary"}
+                onClick={() => setDueFilter("all")}
+              >
+                All
+              </button>
             </div>
           </div>
 
@@ -965,9 +1030,12 @@ function App() {
                       </span>
                     </div>
                     <div className="col-due">
-                      {task.due_date ? (
-                        <span className={isOverdue(task.due_date) ? 'due-date-overdue' : 'due-date'}>
-                          {new Date(task.due_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      {task.due_date || task.due_at ? (
+                        <span className={isOverdue(task.due_date, task.due_at) ? 'due-date-overdue' : 'due-date'}>
+                          {task.due_at
+                            ? new Date(task.due_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                            : new Date(task.due_date as string).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          {task.due_at ? ` • ${formatDueTime(task.due_at)}` : ""}
                         </span>
                       ) : (
                         <span className="due-date-none">—</span>
@@ -1085,6 +1153,14 @@ function App() {
                     min={new Date().toISOString().split('T')[0]}
                   />
                 </div>
+                <div className="form-group">
+                  <label>Due Time</label>
+                  <input
+                    type="time"
+                    value={dueTime}
+                    onChange={(e) => setDueTime(e.target.value)}
+                  />
+                </div>
               </div>
               <div className="modal-footer">
                 <button type="button" onClick={() => setShowAddForm(false)} className="btn-secondary">
@@ -1120,7 +1196,11 @@ function App() {
                 description: formData.get('description') as string || undefined,
                 priority: formData.get('priority') as Priority,
                 category: formData.get('category') as Category,
-                due_date: formData.get('due_date') as string || undefined
+                due_date: formData.get('due_date') as string || undefined,
+                due_at: buildDueAtIso(
+                  formData.get('due_date') as string,
+                  formData.get('due_time') as string
+                )
               })
             }} className="modal-form">
               <div className="form-group">
@@ -1151,6 +1231,14 @@ function App() {
                 <div className="form-group">
                   <label>Due Date</label>
                   <input name="due_date" type="date" defaultValue={editingTask.due_date} />
+                </div>
+                <div className="form-group">
+                  <label>Due Time</label>
+                  <input
+                    name="due_time"
+                    type="time"
+                    defaultValue={toTimeInput(editingTask.due_at)}
+                  />
                 </div>
               </div>
               <div className="modal-footer">
