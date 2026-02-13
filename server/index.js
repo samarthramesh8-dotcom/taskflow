@@ -118,58 +118,71 @@ app.get('/health', async (req, res) => {
   }
 });
 
-// Auth routes - MUST be registered
-console.log('[Server] Registering /auth routes');
-app.use('/auth', authRouter);
+const runMigrations = async () => {
+  await pool.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS due_at TIMESTAMPTZ`);
+};
 
-// Task routes
-console.log('[Server] Registering /api/tasks routes');
-app.use('/api/tasks', authMiddleware, tasksRouter);
+const startServer = () => {
+  // Auth routes - MUST be registered
+  console.log('[Server] Registering /auth routes');
+  app.use('/auth', authRouter);
 
-// 404 handler - MUST return JSON
-app.use((req, res) => {
-  console.warn(`[404] ${req.method} ${req.path}`);
-  res.status(404).json({ 
-    error: 'Not found',
-    path: req.path
-  });
-});
+  // Task routes
+  console.log('[Server] Registering /api/tasks routes');
+  app.use('/api/tasks', authMiddleware, tasksRouter);
 
-// CORS error handler - MUST return JSON
-app.use((err, req, res, next) => {
-  if (err.message === 'CORS policy violation') {
-    console.warn('[CORS] Policy violation from:', req.get('origin'));
-    return res.status(403).json({ 
-      error: 'CORS policy violation',
-      origin: req.get('origin')
+  // 404 handler - MUST return JSON
+  app.use((req, res) => {
+    console.warn(`[404] ${req.method} ${req.path}`);
+    res.status(404).json({ 
+      error: 'Not found',
+      path: req.path
     });
-  }
-  next(err);
-});
-
-// Global error handler - MUST return JSON
-app.use((err, req, res, next) => {
-  console.error('[Error]', err.message);
-  res.status(err.status || 500).json({ 
-    error: err.message || 'Internal server error',
-    ...(NODE_ENV === 'development' && { stack: err.stack })
   });
-});
 
-// Start server
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ Server running on port ${PORT}`);
-  console.log(`   Environment: ${NODE_ENV}`);
-  console.log(`   Database: ${process.env.DATABASE_URL ? 'configured' : 'MISSING'}`);
-  console.log(`   Routes: /health, /auth/*, /api/tasks/*`);
-});
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('[Server] SIGTERM received, closing server...');
-  server.close(() => {
-    console.log('[Server] Server closed');
-    pool.end();
-    process.exit(0);
+  // CORS error handler - MUST return JSON
+  app.use((err, req, res, next) => {
+    if (err.message === 'CORS policy violation') {
+      console.warn('[CORS] Policy violation from:', req.get('origin'));
+      return res.status(403).json({ 
+        error: 'CORS policy violation',
+        origin: req.get('origin')
+      });
+    }
+    next(err);
   });
-});
+
+  // Global error handler - MUST return JSON
+  app.use((err, req, res, next) => {
+    console.error('[Error]', err.message);
+    res.status(err.status || 500).json({ 
+      error: err.message || 'Internal server error',
+      ...(NODE_ENV === 'development' && { stack: err.stack })
+    });
+  });
+
+  // Start server
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`✅ Server running on port ${PORT}`);
+    console.log(`   Environment: ${NODE_ENV}`);
+    console.log(`   Database: ${process.env.DATABASE_URL ? 'configured' : 'MISSING'}`);
+    console.log(`   Routes: /health, /auth/*, /api/tasks/*`);
+  });
+
+  // Graceful shutdown
+  process.on('SIGTERM', () => {
+    console.log('[Server] SIGTERM received, closing server...');
+    server.close(() => {
+      console.log('[Server] Server closed');
+      pool.end();
+      process.exit(0);
+    });
+  });
+};
+
+runMigrations()
+  .then(startServer)
+  .catch((err) => {
+    console.error('[Migration] Failed to apply startup migrations:', err);
+    process.exit(1);
+  });
